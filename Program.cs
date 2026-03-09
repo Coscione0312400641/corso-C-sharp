@@ -51,6 +51,7 @@ namespace ConsoleApp1
             float circonf = raggio * 2 * pi;
             float areaCerchio = raggio * raggio * pi;
             Console.WriteLine("circonf: "+circonf+" area: " + areaCerchio);
+           
             
         }
     }
