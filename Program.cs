@@ -229,7 +229,7 @@ namespace ConsoleApp1
                     Console.WriteLine("INDEFINITA");
                     break;
                     
- 
+  
             }
         }
         
