@@ -1,0 +1,125 @@
+//Dato file CSV sui film Disney con incassi reali e attesi, calcola la predizione del modello in C#
+using Microsoft.ML;
+using Microsoft.ML.Data;
+using ScottPlot;
+using System;
+using System.Linq;
+using System.Collections.Generic;
+
+namespace MLDotnet;
+
+public class Disney
+{
+    [LoadColumn(0)] public string Title;
+    [LoadColumn(1)] public string Release_date;
+    [LoadColumn(2)] public string genre;
+    [LoadColumn(3)] public float MPASS_rating;
+    [LoadColumn(4)] public float Total_gross;
+    [LoadColumn(5)] public float Adjusted_gross;
+    [LoadColumn(6), ColumnName("Label")] public float Charges;
+
+    // Nuova feature
+    public float Year;
+}
+
+public class Prediction
+{
+    [ColumnName("Label")]
+    public float Charges;
+
+    [ColumnName("Score")]
+    public float PredictedCharges;
+}
+
+class Program
+{
+    static void Main(string[] args)
+    {
+        var context = new MLContext(seed: 0);
+
+        Console.WriteLine("Caricamento dati in corso...");
+
+        // 1. Caricamento CSV
+        IDataView dataView = context.Data.LoadFromTextFile<Disney>(
+            "disney movie total gross.csv",
+            hasHeader: true,
+            separatorChar: ',');
+
+        // 2. Conversione in lista per lavorare sui dati
+        var movies = context.Data.CreateEnumerable<Disney>(dataView, reuseRowObject: false).ToList();
+
+        // 3. Estrazione anno
+        foreach (var movie in movies)
+        {
+            if (DateTime.TryParse(movie.Release_date, out DateTime data))
+            {
+                movie.Year = data.Year;
+                Console.WriteLine($"{movie.Title} -> {movie.Year}");
+            }
+        }
+
+        // 4. Ricarico i dati con la nuova feature
+        dataView = context.Data.LoadFromEnumerable(movies);
+
+        // 5. Train/Test split
+        var split = context.Data.TrainTestSplit(dataView, testFraction: 0.2);
+
+        // 6. Pipeline ML
+        var pipeline = context.Transforms.Categorical.OneHotEncoding("GenreEncoded", nameof(Disney.genre))
+            .Append(context.Transforms.Concatenate("Features",
+                nameof(Disney.MPASS_rating),
+                nameof(Disney.Total_gross),
+                nameof(Disney.Adjusted_gross),
+                nameof(Disney.Year),
+                "GenreEncoded"))
+            .Append(context.Regression.Trainers.FastTree(
+                labelColumnName: "Label",
+                featureColumnName: "Features"));
+
+        Console.WriteLine("Addestramento modello...");
+
+        var model = pipeline.Fit(split.TrainSet);
+
+        // 7. Valutazione
+        var predictions = model.Transform(split.TestSet);
+        var metrics = context.Regression.Evaluate(predictions);
+
+        Console.WriteLine($"\nMetriche Modello:");
+        Console.WriteLine($"R-Squared: {metrics.RSquared:0.##}");
+        Console.WriteLine($"MAE: {metrics.MeanAbsoluteError:0.##}$");
+
+        // 8. Grafico
+        VisualizzaRisultati(context, model, split.TestSet);
+    }
+
+    static void VisualizzaRisultati(MLContext context, ITransformer model, IDataView testData)
+    {
+        var predictions = model.Transform(testData);
+
+        var data = context.Data.CreateEnumerable<Prediction>(
+            predictions, reuseRowObject: false).Take(50).ToArray();
+
+        double[] indices = Enumerable.Range(0, data.Length).Select(x => (double)x).ToArray();
+        double[] actuals = data.Select(x => (double)x.Charges).ToArray();
+        double[] predicts = data.Select(x => (double)x.PredictedCharges).ToArray();
+
+        var plt = new ScottPlot.Plot();
+
+        var s1 = plt.Add.Scatter(indices, actuals);
+        s1.Label = "Reale";
+        s1.Color = Colors.Blue;
+
+        var s2 = plt.Add.Scatter(indices, predicts);
+        s2.Label = "Predetto";
+        s2.Color = Colors.Red;
+
+        plt.Title("Confronto Incassi Film: Reale vs Predetto");
+        plt.XLabel("Film");
+        plt.YLabel("Incassi ($)");
+
+        plt.ShowLegend();
+        plt.SavePng("RisultatoML.png", 800, 600);
+
+        Console.WriteLine("\nGrafico salvato: RisultatoML.png");
+    }
+}
